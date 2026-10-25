@@ -15,6 +15,7 @@
   const DASH_COOLDOWN = 2; // İki dash başlangıcı arasında en az iki saniye.
   const DASH_SPEED = 1100;
   const WIND_SPEED = -115;
+  const MAX_FEVER_OBJECTS = 40;
   const dashStatus = document.querySelector("#dash-status");
   const windNotice = document.querySelector("#wind-notice");
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -103,6 +104,11 @@
 
   // Görsel rastgelelik oyun objelerinin RNG akışını etkilemez.
   // Uzak yıldızlar küçük/yavaş, yakın yıldızlar büyük/hızlıdır.
+  const pixelCache = new Map();
+  const imageSizeCache = new Map();
+  const skyColors = [["#474c80", "#888ac5", "#dae6ff"], ["#c53a27", "#ff9138", "#ffe36e"]];
+  const skySpeeds = [5, 12, 24];
+  let cachedDifficultyScore = -1, cachedDifficulty = null;
   let starfieldTime = 0;
   const skyStars = Array.from({ length: 60 }, (_, i) => ({
     x: ((i * 137 + 41) % 997) / 997,
@@ -134,9 +140,9 @@
       hit: makeAudio("carpma sound.mp3", 0.8),
       gameOver: makeAudio("game over sound.mp3", 0.8)
     };
-    // Önceden oluşturulan sekiz ses kanalı, kalp/yemek yağmurunda üst üste çalar.
+    // Önceden oluşturulan beş ses kanalı, kalp/yemek yağmurunda üst üste çalar.
     // Hepsi ilk kullanıcı etkileşiminde hazırlanır; her yakalamada yeni dosya açılmaz.
-    const pickups = Array.from({ length: 8 }, () => makeAudio("kalp top sound.mp3", 0.2));
+    const pickups = Array.from({ length: 5 }, () => makeAudio("kalp top sound.mp3", 0.2));
     const all = [...Object.values(tracks), ...pickups];
     let mode = "idle", primed = false, generation = 0, nextVoice = 0;
 
@@ -345,10 +351,14 @@
   }
 
   function updateDashStatus() {
-    dashStatus.hidden = gamePhase !== 2 || state !== "playing";
+    setHidden(dashStatus, gamePhase !== 2 || state !== "playing");
     const text = dashTime > 0 ? "DASH · Hasar almaz" : dashCooldown > 0
       ? `Dash: ${dashCooldown.toFixed(1)} sn` : "Dash hazır · Space / çift dokun";
     if (dashStatus.textContent !== text) dashStatus.textContent = text;
+  }
+
+  function setHidden(element, hidden) {
+    if (element.hidden !== hidden) element.hidden = hidden;
   }
 
   function resetActionEffects() {
@@ -423,13 +433,22 @@
   // 300'e kadar kademeli; sonrasında hız ve saniyedeki obje sayısı
   // log1p ile kesintisiz ama çok daha sert artar. Aralık, sıklığın tersidir.
   function difficulty() {
+    if (cachedDifficultyScore === score) return cachedDifficulty;
+    cachedDifficultyScore = score;
     const early = Math.min(score, 300) / 300;
     const surge = Math.log1p(Math.max(0, score - 300) / 100);
-    return { speed: 115 + early * 130 + surge * 145,
+    cachedDifficulty = { speed: 115 + early * 130 + surge * 145,
       interval: 1 / (1.05 + early * 0.85 + surge * 1.8) };
+    return cachedDifficulty;
   }
 
   function spawnObject(kind = "random") {
+    if (kind === "heart") {
+      let activeGood = 0;
+      for (const object of objects) {
+        if (!object.bad && ++activeGood >= MAX_FEVER_OBJECTS) return;
+      }
+    }
     const roll = Math.random();
     const bonus = kind === "random" && roll < 0.05; // Nadir espresso: %5, +50 puan.
     const bad = kind === "enemy" || (kind === "random" && score <= 300 && roll >= 0.05 && roll < 0.27);
@@ -449,9 +468,9 @@
   // Fontun boş kenarlarını dışarıda bırakan görsel boyuta uygun kutular.
   function collides(object) {
     const playerWidth = gamePhase === 2 ? imageDimensions("player", player.size).width * 0.8 : player.size * 0.66;
-    const objectBox = object.imageKey ? imageDimensions(object.imageKey, object.size) : { width: object.size, height: object.size };
-    return Math.abs(object.x - player.x) < (playerWidth + objectBox.width * 0.76) / 2
-      && Math.abs(object.y - player.y) < (player.size * 0.80 + objectBox.height * 0.76) / 2;
+    const objectBox = object.imageKey ? imageDimensions(object.imageKey, object.size) : null;
+    return Math.abs(object.x - player.x) < (playerWidth + (objectBox ? objectBox.width : object.size) * 0.76) / 2
+      && Math.abs(object.y - player.y) < (player.size * 0.80 + (objectBox ? objectBox.height : object.size) * 0.76) / 2;
   }
 
   function update(dt) {
@@ -468,8 +487,10 @@
     dashTime = Math.max(0, dashTime - dt);
     dashCooldown = Math.max(0, dashCooldown - dt);
     dashTrailTimer -= dt;
-    dashGhosts.forEach(ghost => { ghost.life -= dt; });
-    dashGhosts = dashGhosts.filter(ghost => ghost.life > 0);
+    for (let i = dashGhosts.length - 1; i >= 0; i--) {
+      dashGhosts[i].life -= dt;
+      if (dashGhosts[i].life <= 0) dashGhosts.splice(i, 1);
+    }
     if (protectedThisStep && dashTrailTimer <= 0 && oldX !== player.x) {
       dashGhosts.push({ x: oldX, y: player.y, size: player.size, life: 0.25 });
       dashTrailTimer = 0.03;
@@ -477,21 +498,23 @@
     shakeTime = Math.max(0, shakeTime - dt);
     flashTime = Math.max(0, flashTime - dt);
     windNoticeTime = Math.max(0, windNoticeTime - dt);
-    windNotice.hidden = windNoticeTime === 0;
-    updateDashStatus();
+    setHidden(windNotice, windNoticeTime === 0);
     trailTimer -= dt;
     if (player.x !== oldX && trailTimer <= 0) {
       stars.push({ x: oldX, y: player.y + 12 + Math.random() * 10, life: 0.45 });
       trailTimer = 0.045;
     }
-    stars.forEach(star => { star.life -= dt; star.y -= 12 * dt; });
-    stars = stars.filter(star => star.life > 0);
+    for (let i = stars.length - 1; i >= 0; i--) {
+      const star = stars[i];
+      star.life -= dt; star.y -= 12 * dt;
+      if (star.life <= 0) stars.splice(i, 1);
+    }
     phaseTimer = Math.max(0, phaseTimer - dt);
-    phaseNotice.hidden = phaseTimer === 0;
+    setHidden(phaseNotice, phaseTimer === 0);
     stageTimer = Math.max(0, stageTimer - dt);
-    stageNotice.hidden = stageTimer === 0;
+    setHidden(stageNotice, stageTimer === 0);
     feverTime = Math.max(0, feverTime - dt);
-    feverNotice.hidden = feverTime === 0;
+    setHidden(feverNotice, feverTime === 0);
     const level = difficulty();
     spawnTimer -= dt;
     if (spawnTimer <= 0) {
@@ -499,7 +522,8 @@
       spawnTimer += feverTime > 0 ? 0.085 : level.interval;
     }
 
-    for (const object of objects) {
+    for (let i = objects.length - 1; i >= 0; i--) {
+      const object = objects[i];
       // Sinüsün merkezi de rüzgârla kayar; düşman hareketi rüzgârı ezmez.
       if (windActive) {
         if (object.bad) object.baseX += WIND_SPEED * dt;
@@ -510,10 +534,16 @@
         object.x = object.baseX + Math.sin(object.phase) * object.amplitude;
       }
       object.y += level.speed * object.speedFactor * dt;
+      // Fizik CSS pikseli kullanır; canvas.height yarım çözünürlüktedir.
+      // Alt kenarı geçenler hemen kaldırılır, çarpışma/çizime taşınmaz.
+      if (object.y > height || object.x < -object.size) objects.splice(i, 1);
     }
 
     // Önce bonusu değerlendir: aynı karedeki düşman teması da temizlenir.
-    const coffee = objects.find(object => object.bonus && collides(object));
+    let coffee;
+    for (const object of objects) {
+      if (object.bonus && collides(object)) { coffee = object; break; }
+    }
     if (coffee) {
       feverTime = 5;
       feverNotice.hidden = false;
@@ -542,21 +572,25 @@
         objects.splice(i, 1);
         const phaseChanged = collect(object);
         if (phaseChanged || state !== "playing") return;
-      } else if (object.y > height + object.size || object.x < -object.size) objects.splice(i, 1);
+      }
     }
     // 300'den sonra üç, 400'den itibaren dört düşman; kahve molasında sıfır.
     // Takviyeler yalnızca üst kenardan girer, oyuncunun yanında belirmez.
     if (score > 300 && feverTime === 0) {
       const target = score >= 400 ? 4 : 3;
-      let count = objects.filter(object => object.bad).length;
+      let count = 0;
+      for (const object of objects) if (object.bad) count++;
       while (count < target) {
         spawnObject("enemy");
         objects[objects.length - 1].y = objects[objects.length - 1].size / 2;
         count++;
       }
     }
-    particles.forEach(p => { p.life -= dt; p.y -= 35 * dt; });
-    particles = particles.filter(p => p.life > 0);
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.life -= dt; p.y -= 35 * dt;
+      if (p.life <= 0) particles.splice(i, 1);
+    }
   }
 
   function collect(object) {
@@ -583,9 +617,14 @@
   }
 
   function imageDimensions(key, size) {
+    let sizes = imageSizeCache.get(key);
+    if (!sizes) { sizes = new Map(); imageSizeCache.set(key, sizes); }
+    if (sizes.has(size)) return sizes.get(size);
     const image = assets[key];
     const scale = size / Math.max(image.naturalWidth, image.naturalHeight);
-    return { width: image.naturalWidth * scale, height: image.naturalHeight * scale };
+    const dimensions = { width: image.naturalWidth * scale, height: image.naturalHeight * scale };
+    sizes.set(size, dimensions);
+    return dimensions;
   }
 
   function drawSprite(key, x, y, size, alpha = 1) {
@@ -598,37 +637,58 @@
     ctx.restore();
   }
 
-  function drawPixelArt(name, x, y, size, alpha = 1) {
+  function cachePixelArt(name, size) {
+    let sizes = pixelCache.get(name);
+    if (!sizes) { sizes = new Map(); pixelCache.set(name, sizes); }
+    if (sizes.has(size)) return sizes.get(size);
     const grid = pixelSprites[name];
-    if (!grid) return;
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    // Canvas yarım çözünürlükte: her kenar tam çizim pikseline oturur.
-    // Sprite'ın ekrandaki boyutu ve çarpışma kutusu aynı kalır.
-    const snap = value => Math.round(value / 2) * 2;
-    const left = snap(x - size / 2), top = snap(y - size / 2);
+    if (!grid) return null;
+    const bitmap = document.createElement("canvas");
+    bitmap.width = bitmap.height = Math.round(size / 2);
+    const buffer = bitmap.getContext("2d");
+    buffer.imageSmoothingEnabled = false;
     for (let row = 0; row < 16; row++) {
       for (let col = 0; col < 16; col++) {
         const color = pixelPalette[grid[row][col]];
         if (!color) continue;
-        ctx.fillStyle = color;
-        const x1 = snap(col * size / 16), y1 = snap(row * size / 16);
-        ctx.fillRect(left + x1, top + y1,
-          snap((col + 1) * size / 16) - x1, snap((row + 1) * size / 16) - y1);
+        buffer.fillStyle = color;
+        // Önceki snap(...)/2 ile birebir aynı hücre sınırları.
+        const x = Math.round(col * size / 32), y = Math.round(row * size / 32);
+        buffer.fillRect(x, y, Math.round((col + 1) * size / 32) - x,
+          Math.round((row + 1) * size / 32) - y);
       }
     }
+    sizes.set(size, bitmap);
+    return bitmap;
+  }
+
+  function preparePixelArt() {
+    // Oyunda kullanılan tüm boyutlar önceden hazırlanır; RAF içinde yeni
+    // Canvas veya 256 hücrelik matris taraması yapılmaz. Fotoğraflar değişmez.
+    for (const name of Object.keys(pixelSprites)) {
+      for (const size of [16, 30, 34, 44, 48]) cachePixelArt(name, size);
+    }
+  }
+
+  function drawPixelArt(name, x, y, size, alpha = 1) {
+    const bitmap = pixelCache.get(name)?.get(size);
+    if (!bitmap) return;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.imageSmoothingEnabled = false;
+    const left = Math.round((x - size / 2) / 2) * 2;
+    const top = Math.round((y - size / 2) / 2) * 2;
+    ctx.drawImage(bitmap, left, top, bitmap.width * 2, bitmap.height * 2);
     ctx.restore();
   }
 
   function drawStarfield() {
     ctx.save();
     ctx.globalAlpha = 1;
-    const colors = gamePhase === 2
-      ? ["#c53a27", "#ff9138", "#ffe36e"]
-      : ["#474c80", "#888ac5", "#dae6ff"];
+    const colors = skyColors[gamePhase === 2 ? 1 : 0];
     for (const star of skyStars) {
       const size = star.layer === 2 ? 4 : 2;
-      const drift = reducedMotion.matches ? 0 : starfieldTime * [5, 12, 24][star.layer];
+      const drift = reducedMotion.matches ? 0 : starfieldTime * skySpeeds[star.layer];
       const x = Math.floor(star.x * width / 2) * 2;
       const y = Math.floor(((star.y * (height + 8) + drift) % (height + 8) - 4) / 2) * 2;
       ctx.fillStyle = colors[star.layer];
@@ -642,12 +702,14 @@
   }
 
   function draw() {
+    updateDashStatus();
     ctx.clearRect(0, 0, width, height);
     drawStarfield();
     // Efektler yalnızca çizimi etkiler; çarpışma koordinatları sabit kalır.
     const shaking = shakeTime > 0 && !reducedMotion.matches;
-    canvas.style.transform = shaking
+    const transform = shaking
       ? `translate(${(Math.random() * 24 - 12).toFixed(2)}px, ${(Math.random() * 24 - 12).toFixed(2)}px)` : "";
+    if (canvas.style.transform !== transform) canvas.style.transform = transform;
     if (flashTime > 0) {
       ctx.save();
       ctx.globalAlpha = (reducedMotion.matches ? 0.25 : 0.7) * (flashTime / 0.25) ** 2;
@@ -702,7 +764,7 @@
       update(step);
       remaining -= step;
     }
-    draw();
+    if (!document.hidden) draw();
     requestAnimationFrame(frame);
   }
 
@@ -754,6 +816,7 @@
   startButton.addEventListener("click", () => assetsReady ? startGame() : preloadAssets());
   restartButton.addEventListener("click", startGame);
   winRestartButton.addEventListener("click", startGame);
+  preparePixelArt();
   resize();
   preloadAssets();
   requestAnimationFrame(frame);

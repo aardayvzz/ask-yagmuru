@@ -8,6 +8,7 @@ const root = path.resolve(__dirname, '..');
 
 async function game() {
   const elements = new Map(), handlers = { window: {}, document: {} }, frames = [];
+  const bitmaps = [], blits = [];
   const stack = [], rects = [], labels = [], colors = [], audios = [], audible = [];
   const ctx = { globalAlpha: 1, fillStyle: '#000',
     save() { stack.push({ globalAlpha: this.globalAlpha, fillStyle: this.fillStyle }); },
@@ -15,6 +16,15 @@ async function game() {
   for (const method of ['setTransform','clearRect','fillRect','drawImage','fillText','beginPath','ellipse','fill','stroke','moveTo','lineTo']) ctx[method] = () => {};
   ctx.fillRect = (...args) => { rects.push(args); colors.push(ctx.fillStyle); };
   ctx.fillText = (text) => labels.push(text);
+  ctx.drawImage = (...args) => blits.push(args);
+  const createElement = tag => {
+    assert.equal(tag, 'canvas');
+    const commands = [];
+    const buffer = { fillStyle: '', fillRect(...args) { commands.push({ color: this.fillStyle, args }); } };
+    const bitmap = { commands, getContext: () => buffer };
+    bitmaps.push(bitmap);
+    return bitmap;
+  };
   for (const [, id] of fs.readFileSync(path.join(root, 'index.html'), 'utf8').matchAll(/id="([^"]+)"/g)) {
     elements.set('#' + id, { hidden: true, style: {}, textContent: '', addEventListener() {}, focus() {}, replaceChildren() {}, getContext: () => ctx, getBoundingClientRect: () => ({ width: 375, height: 600 }) });
   }
@@ -36,13 +46,13 @@ async function game() {
     }
     pause() { this.paused=true; }
   }
-  const scope = { Image, Audio, document: { body: { dataset: {} }, hidden: false, querySelector: id => elements.get(id), addEventListener: listen('document') },
+  const scope = { Image, Audio, document: { createElement, body: { dataset: {} }, hidden: false, querySelector: id => elements.get(id), addEventListener: listen('document') },
     window: { innerWidth: 375, devicePixelRatio: 2, matchMedia: () => ({ matches: false }), addEventListener: listen('window') },
     ResizeObserver: class { observe() {} }, requestAnimationFrame: callback => frames.push(callback) };
   const source = fs.readFileSync(path.join(root, 'game.js'), 'utf8');
   // Test erişimi yalnızca VM kopyasına eklenir; üretim koduna debug API konmaz.
   vm.runInNewContext(source.replace(/\}\)\(\);\s*$/, `
-    globalThis.api = { startGame, collect, update, draw, requestDash, spawnObject, player, keys, drawPixelArt, drawStarfield, pixelSprites, skyStars,
+    globalThis.api = { startGame, collect, update, draw, requestDash, spawnObject, player, keys, drawPixelArt, drawStarfield, pixelSprites, pixelPalette, skyStars,
       get ready(){return assetsReady}, get score(){return score}, get state(){return state},
       get phase(){return gamePhase}, get skyTime(){return starfieldTime}, get dash(){return dashTime}, get cooldown(){return dashCooldown},
       get shake(){return shakeTime}, get flash(){return flashTime}, get wind(){return windActive},
@@ -60,6 +70,7 @@ async function game() {
   g.tick = duration => { while (duration > 1e-9) { const dt = Math.min(duration, 1 / 120); g.update(dt); duration -= dt; } };
   g.phaseTwo = () => { g.startGame(); g.setScore(490); g.collect({ points: 10, x: 100, y: 100 }); g.setScore(200); g.clear(); };
   g.enemy = () => ({ x: g.player.x, baseX: g.player.x, y: g.player.y, phase: 0, frequency: 0, amplitude: 0, size: 48, bad: true, imageKey: 'enemy', speedFactor: 0 });
+  g.bitmaps = bitmaps; g.blits = blits; g.document = scope.document;
   g.elements = elements; g.frames = frames; g.ctx = ctx; g.rects = rects; g.labels = labels; g.colors = colors; g.audios = audios; g.audible = audible;
   g.audio = file => audios.find(a => decodeURIComponent(a.src) === `assets/${file}`);
   return g;
@@ -143,7 +154,8 @@ test('Piksel görselleri 16×16; karakter ve objeler emoji fontu kullanmaz', asy
     grid.forEach((row, i) => assert.equal(row.length, 16, `${name}: satır ${i}`));
     g.drawPixelArt(name, 100, 100, 48);
   }
-  assert(g.rects.length > 300); assert(g.rects.every(r => r.every(n => n % 2 === 0)));
+  assert.equal(g.blits.length, Object.keys(g.pixelSprites).length);
+  assert(g.blits.every(([, ...coords]) => coords.every(n => n % 2 === 0)));
   assert.equal(g.labels.length, 0);
   g.startGame(); g.draw(); assert.equal(g.labels.length, 0);
   g.collect({points:10,x:100,y:100});g.draw();assert(g.labels.every(text => /^[-+]\d+$/.test(text)));
@@ -213,4 +225,76 @@ test('Autoplay reddi sonraki dokunuşta tekrar denenir; oyun akışı durmaz', a
   const transition=g.audio('phase 2 gecis.mp3');transition.block=true;g.setScore(490);g.collect({points:10,x:100,y:100});await new Promise(setImmediate);
   assert.equal(g.phase,2);assert.equal(g.audio('son duzluk.mp3').paused,true);
   transition.block=false;g.fire('document','pointerdown');assert.equal(transition.paused,false);transition.emit('ended');assert.equal(g.audio('son duzluk.mp3').paused,false);
+});
+
+test('Beş toplama kanalı tekrar kullanılır; yakalama/hasar yeni Audio oluşturmaz', async () => {
+  const g = await game();
+  const pool = g.audios.filter(a => decodeURIComponent(a.src).endsWith('kalp top sound.mp3'));
+  assert.equal(pool.length, 5); assert.equal(g.audios.length, 10);
+  g.phaseTwo();
+  for (let i = 0; i < 100; i++) {
+    g.setScore(200); g.collect({points:10,x:100,y:100});
+    g.add(g.enemy()); g.update(0);
+  }
+  g.startGame();
+  assert.equal(g.audios.length, 10);
+  assert(pool.every(a => a.volume === .2));
+});
+
+test('Fever yağmuru 40 objeyi aşmaz; boşalan yer tekrar kullanılabilir', async () => {
+  const g = await game(); g.phaseTwo();
+  for (let i = 0; i < 200; i++) g.spawnObject('heart');
+  assert.equal(g.objects.length, 40);
+  g.objects[0].y = 601; g.update(0);
+  assert.equal(g.objects.length, 39);
+  g.spawnObject('heart'); assert.equal(g.objects.length, 40);
+  g.spawnObject('enemy'); assert.equal(g.objects.length, 41);
+  assert.equal(g.objects.filter(o => o.bad).length, 1);
+});
+
+test('Alt kenarı geçen her obje silinir; yarım çözünürlük görünür objeleri silmez', async () => {
+  const g = await game(); g.phaseTwo();
+  const visible = {x:50,y:400,size:30,speedFactor:0,bad:false,sprite:'heart'};
+  g.add(visible);
+  g.add({...visible,y:601});
+  g.add({...g.enemy(),y:601});
+  g.add({...visible,y:601,bonus:true,imageKey:'cat'});
+  g.update(0);
+  assert.equal(g.objects.length, 1); assert.equal(g.objects[0], visible);
+});
+
+test('Önbellekteki piksel hücreleri eski çizimle aynı; karelerde yeniden üretilmez', async () => {
+  const g = await game();
+  const initial = g.bitmaps.length;
+  for (const [name, grid] of Object.entries(g.pixelSprites)) {
+    for (const size of [16,30,34,44,48]) {
+      g.drawPixelArt(name, 101, 99, size);
+      const [bitmap, left, top, width, height] = g.blits.at(-1);
+      assert.equal(left, Math.round((101-size/2)/2)*2);
+      assert.equal(top, Math.round((99-size/2)/2)*2);
+      assert.equal(width,size); assert.equal(height,size);
+      const expected = [];
+      for (let r=0;r<16;r++) for (let c=0;c<16;c++) {
+        const color=g.pixelPalette[grid[r][c]]; if(!color)continue;
+        const x=Math.round(c*size/32), y=Math.round(r*size/32);
+        expected.push({color,args:[x,y,Math.round((c+1)*size/32)-x,Math.round((r+1)*size/32)-y]});
+      }
+      assert.deepEqual(bitmap.commands,expected);
+    }
+  }
+  for(let i=0;i<100;i++)g.drawPixelArt('girl',100,100,44);
+  assert.equal(g.bitmaps.length,initial);
+  assert.equal(g.rects.length,0); // Hücreler ana canvas'a tek tek çizilmez.
+});
+
+test('Gizli sekmede çizim ve fizik durur; tek RAF zinciri korunur', async () => {
+  const g = await game(); g.startGame(); g.clear();
+  g.frames.shift()(1000);
+  const before = g.rects.length, time = g.skyTime;
+  g.document.hidden = true;
+  for(let i=1;i<=60;i++)g.frames.shift()(1000+i*16);
+  assert.equal(g.rects.length,before); assert.equal(g.skyTime,time);
+  assert.equal(g.objects.length,0); assert.equal(g.frames.length,1);
+  g.document.hidden=false;g.frames.shift()(2000);
+  assert(g.rects.length>before); assert.equal(g.frames.length,1);
 });
