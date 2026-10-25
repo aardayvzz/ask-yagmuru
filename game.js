@@ -16,6 +16,8 @@
   const DASH_SPEED = 1100;
   const WIND_SPEED = -115;
   const MAX_FEVER_OBJECTS = 40;
+  const MAX_CAT_FEVER_OBJECTS = 18;
+  const PICKUP_SOUND_INTERVAL_MS = 100;
   const dashStatus = document.querySelector("#dash-status");
   const windNotice = document.querySelector("#wind-notice");
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -145,6 +147,7 @@
     const pickups = Array.from({ length: 5 }, () => makeAudio("kalp top sound.mp3", 0.2));
     const all = [...Object.values(tracks), ...pickups];
     let mode = "idle", primed = false, generation = 0, nextVoice = 0;
+    let lastPickupTime = -Infinity;
 
     function stop(audio) {
       audio.pause();
@@ -152,6 +155,7 @@
     }
     function stopAll() {
       generation++;
+      lastPickupTime = -Infinity;
       all.forEach(stop);
       mode = "idle";
     }
@@ -222,6 +226,10 @@
         resumeMusic();
       },
       collect() {
+        // Gerçek zaman kullanılır: aynı karedeki yakalamalar tek ses çıkarır.
+        const now = performance.now();
+        if (now - lastPickupTime < PICKUP_SOUND_INTERVAL_MS) return;
+        lastPickupTime = now;
         const voice = pickups.find(audio => audio.paused || audio.ended) || pickups[nextVoice];
         nextVoice = (nextVoice + 1) % pickups.length;
         stop(voice);
@@ -443,10 +451,12 @@
   }
 
   function spawnObject(kind = "random") {
+    const catRain = kind === "heart" && gamePhase === 2;
     if (kind === "heart") {
+      const limit = catRain ? MAX_CAT_FEVER_OBJECTS : MAX_FEVER_OBJECTS;
       let activeGood = 0;
       for (const object of objects) {
-        if (!object.bad && ++activeGood >= MAX_FEVER_OBJECTS) return;
+        if (!object.bad && ++activeGood >= limit) return;
       }
     }
     const roll = Math.random();
@@ -462,7 +472,7 @@
     objects.push({ x: baseX + Math.sin(phase) * amplitude, y: -size,
       baseX, amplitude, phase, frequency: 3 + Math.random() * 2,
       size, imageKey, sprite: kind === "heart" && gamePhase === 1 ? "heart" : bonus ? "coffee" : choices[Math.floor(Math.random() * choices.length)],
-      bad, bonus, points: bonus ? 50 : 10, speedFactor: bonus || kind === "heart" ? 2 : 1 });
+      bad, bonus, points: bonus ? 50 : catRain ? 30 : 10, speedFactor: bonus || kind === "heart" ? 2 : 1 });
   }
 
   // Fontun boş kenarlarını dışarıda bırakan görsel boyuta uygun kutular.
@@ -519,7 +529,9 @@
     spawnTimer -= dt;
     if (spawnTimer <= 0) {
       spawnObject(feverTime > 0 ? "heart" : "random");
-      spawnTimer += feverTime > 0 ? 0.085 : level.interval;
+      // Kedi yağmurunda üçte bir sıklık ve üç kat puan: daha az çizim,
+      // aynı teorik puan akışı. Kahve yağmurunun sıklığı korunur.
+      spawnTimer += feverTime > 0 ? (gamePhase === 2 ? 0.255 : 0.085) : level.interval;
     }
 
     for (let i = objects.length - 1; i >= 0; i--) {

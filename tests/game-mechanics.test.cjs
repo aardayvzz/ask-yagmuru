@@ -8,6 +8,7 @@ const root = path.resolve(__dirname, '..');
 
 async function game() {
   const elements = new Map(), handlers = { window: {}, document: {} }, frames = [];
+  let audioTime = 0;
   const bitmaps = [], blits = [];
   const stack = [], rects = [], labels = [], colors = [], audios = [], audible = [];
   const ctx = { globalAlpha: 1, fillStyle: '#000',
@@ -46,7 +47,7 @@ async function game() {
     }
     pause() { this.paused=true; }
   }
-  const scope = { Image, Audio, document: { createElement, body: { dataset: {} }, hidden: false, querySelector: id => elements.get(id), addEventListener: listen('document') },
+  const scope = { performance: { now: () => audioTime }, Image, Audio, document: { createElement, body: { dataset: {} }, hidden: false, querySelector: id => elements.get(id), addEventListener: listen('document') },
     window: { innerWidth: 375, devicePixelRatio: 2, matchMedia: () => ({ matches: false }), addEventListener: listen('window') },
     ResizeObserver: class { observe() {} }, requestAnimationFrame: callback => frames.push(callback) };
   const source = fs.readFileSync(path.join(root, 'game.js'), 'utf8');
@@ -70,6 +71,7 @@ async function game() {
   g.tick = duration => { while (duration > 1e-9) { const dt = Math.min(duration, 1 / 120); g.update(dt); duration -= dt; } };
   g.phaseTwo = () => { g.startGame(); g.setScore(490); g.collect({ points: 10, x: 100, y: 100 }); g.setScore(200); g.clear(); };
   g.enemy = () => ({ x: g.player.x, baseX: g.player.x, y: g.player.y, phase: 0, frequency: 0, amplitude: 0, size: 48, bad: true, imageKey: 'enemy', speedFactor: 0 });
+  g.advanceAudio = ms => { audioTime += ms; };
   g.bitmaps = bitmaps; g.blits = blits; g.document = scope.document;
   g.elements = elements; g.frames = frames; g.ctx = ctx; g.rects = rects; g.labels = labels; g.colors = colors; g.audios = audios; g.audible = audible;
   g.audio = file => audios.find(a => decodeURIComponent(a.src) === `assets/${file}`);
@@ -203,9 +205,9 @@ test('Başlangıçta sessiz; Başla ile 0.3 sesli loop, Faz 2 sıralaması ve te
   const plays=g.audible.length;transition.emit('ended');assert.equal(g.audible.length,plays);
 });
 
-test('Toplama üst üste çalar; hasar sesi yalnızca gerçek cezada çalar', async () => {
-  const g=await game();g.phaseTwo();g.audible.length=0;
-  g.collect({points:10,x:100,y:100});g.collect({points:10,x:100,y:100});
+test('Toplama 100 ms aralıkla çalar; hasar sesi yalnızca gerçek cezada çalar', async () => {
+  const g=await game();g.phaseTwo();g.advanceAudio(100);g.audible.length=0;
+  g.collect({points:10,x:100,y:100});g.advanceAudio(100);g.collect({points:10,x:100,y:100});
   assert.equal(g.audible.length,2);assert.notEqual(g.audible[0],g.audible[1]);assert(g.audible.every(a=>!a.paused));
   g.add(g.enemy());g.update(0);assert.equal(g.audible.at(-1),g.audio('carpma sound.mp3'));
   const plays=g.audible.length;g.requestDash();g.add(g.enemy());g.update(0);assert.equal(g.audible.length,plays);
@@ -241,14 +243,14 @@ test('Beş toplama kanalı tekrar kullanılır; yakalama/hasar yeni Audio oluşt
   assert(pool.every(a => a.volume === .2));
 });
 
-test('Fever yağmuru 40 objeyi aşmaz; boşalan yer tekrar kullanılabilir', async () => {
+test('Kedi yağmuru 18 objeyi aşmaz; boşalan yer tekrar kullanılabilir', async () => {
   const g = await game(); g.phaseTwo();
   for (let i = 0; i < 200; i++) g.spawnObject('heart');
-  assert.equal(g.objects.length, 40);
+  assert.equal(g.objects.length, 18);
   g.objects[0].y = 601; g.update(0);
-  assert.equal(g.objects.length, 39);
-  g.spawnObject('heart'); assert.equal(g.objects.length, 40);
-  g.spawnObject('enemy'); assert.equal(g.objects.length, 41);
+  assert.equal(g.objects.length, 17);
+  g.spawnObject('heart'); assert.equal(g.objects.length, 18);
+  g.spawnObject('enemy'); assert.equal(g.objects.length, 19);
   assert.equal(g.objects.filter(o => o.bad).length, 1);
 });
 
@@ -297,4 +299,39 @@ test('Gizli sekmede çizim ve fizik durur; tek RAF zinciri korunur', async () =>
   assert.equal(g.objects.length,0); assert.equal(g.frames.length,1);
   g.document.hidden=false;g.frames.shift()(2000);
   assert(g.rects.length>before); assert.equal(g.frames.length,1);
+});
+
+test('Ses freni 99/100 ms sınırını korur; puanları ve yeniden başlamayı etkilemez', async () => {
+  const g = await game(); g.startGame(); g.audible.length = 0;
+  for(let i=0;i<10;i++)g.collect({points:10,x:100,y:100});
+  assert.equal(g.audible.length,1); assert.equal(g.score,100);
+  g.advanceAudio(99);g.collect({points:10,x:100,y:100});
+  assert.equal(g.audible.length,1);
+  g.advanceAudio(1);g.collect({points:10,x:100,y:100});
+  assert.equal(g.audible.length,2);assert.equal(g.score,120);
+  g.startGame();g.audible.length=0;g.collect({points:10,x:100,y:100});
+  assert.equal(g.audible.length,1);
+});
+
+test('Yalnız kedi yağmuru +30 verir; kahve ve normal objeler aynı kalır', async () => {
+  const g=await game();g.startGame();g.clear();
+  for(let i=0;i<50;i++)g.spawnObject('heart');
+  assert.equal(g.objects.length,40);assert(g.objects.every(o=>o.points===10));
+  g.phaseTwo();g.spawnObject('heart');
+  assert.equal(g.objects[0].points,30);
+  g.collect(g.objects[0]);assert.equal(g.score,230);
+  g.clear();g.spawnObject();
+  assert.equal(g.objects[0].points,g.objects[0].bonus?50:10);
+});
+
+test('Kedi yağmuru beş saniyede en fazla 20 yeni obje üretir', async () => {
+  const g=await game();g.phaseTwo();
+  g.add({x:g.player.x,y:g.player.y,size:48,speedFactor:0,bonus:true,bad:false,imageKey:'cat',points:50});
+  g.update(0);assert.equal(g.fever,5);
+  // Objeleri her adımda kaldırarak kapasite sınırından bağımsız spawn sayısını ölç.
+  let spawned=0;
+  for(let i=0;i<599;i++){
+    g.update(1/120);spawned+=g.objects.length;g.objects.length=0;
+  }
+  assert(spawned>=19 && spawned<=20);
 });
