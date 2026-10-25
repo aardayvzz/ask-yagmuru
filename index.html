@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#11152d">
+  <title>Aşk Yağmuru · Senin için</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="game.js" defer></script>
+</head>
+<body>
+  <main class="game-shell">
+    <header class="heading">
+      <h1>seni çok seviyorum güzelimm</h1>
+    </header>
+
+    <section class="playfield" aria-label="Aşk Yağmuru oyunu">
+      <canvas id="game" tabindex="0" aria-label="Sol ve sağ oklar veya A ve D ile hareket et. Telefonda ekranın sol ya da sağ yarısını basılı tut. Kalp, çiçek ve çikolata yakala; kitap ve alarmdan kaçın. Faz 2'de Space veya aynı yarıya çift dokunmayla dash yap.">Bu oyun için Canvas destekleyen bir tarayıcı gerekiyor.</canvas>
+      <div class="hud"><div class="score-card"><span>SKOR</span><strong id="score">0</strong></div><span class="love-note"><span id="phase-label">Faz 1 · Aşk Yağmuru</span><br>Hedef: 1000 ♡</span></div>
+      <div class="phase-notice" id="phase-notice" role="status" hidden>ACIktık!<br><span>Faz 2 Başlıyor!</span></div>
+      <div class="stage-notice" id="stage-notice" role="status" hidden>Hızlanıyoruz!</div>
+      <div class="fever-notice" id="fever-notice" role="status" hidden>Kahve Molası!</div>
+      <div class="wind-notice" id="wind-notice" role="status" hidden>SON DÜZLÜK!</div>
+      <div class="dash-status" id="dash-status" hidden>Dash hazır · Space / çift dokun</div>
+      <div class="ground" aria-hidden="true"><span>← SOLA GİT</span><span>SAĞA GİT →</span></div>
+
+      <div class="overlay" id="start-screen">
+        <div class="modal">
+          <span class="modal-icon" aria-hidden="true">[ LOVE ]</span>
+          <span class="eyebrow">BÜTÜN GÜZELLİKLERİ YAKALA</span>
+          <h2>Hazır mısın, sevgilim?</h2>
+          <p>Kalpler, çiçekler ve biraz çikolata…<br>Hepsi sana. Vizeler ve alarmlar hariç!<br>1000 puanı topla, tatlı ödülünü kazan.<br>Her 100 puanda yeni renkler, yeni heyecan!<br>Espresso: 5 saniyelik güvenli kalp yağmuru.<br>500 puanda hamburger ve waffle zamanı<br>Fotoğrafa çarpmak −50 puan; kedi, 5 saniyelik mola!<br>Faz 2: Space / aynı tarafa çift dokun → dash.<br>750 puanda rüzgâra hazır ol!</p>
+          <div class="legend"><span>Kalp / Çiçek<br>Çikolata <b>+10</b></span><span>Kahve <b>+50 · 2× hızlı</b></span><span>Kitap <b>Uzak dur</b></span></div>
+          <p id="asset-status" role="status">Sürprizler hazırlanıyor…</p>
+          <button id="start-button" type="button" disabled>Hadi Başlayalım <span aria-hidden="true">♡</span></button>
+          <small>Telefonda sol / sağ yarıyı basılı tut.<br>Bilgisayarda ← → veya A / D kullan.</small>
+        </div>
+      </div>
+
+      <div class="overlay" id="game-over" hidden>
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="end-title" aria-describedby="end-message">
+          <span class="modal-icon" aria-hidden="true">[ RETRY ]</span>
+          <h2 id="end-title">Oyun Bitti!</h2>
+          <p id="end-message">Ama olsun, seni çok seviyorum.<br>Skorun: <strong id="final-score">0</strong></p>
+          <button id="restart-button" type="button">Tekrar Oyna <span aria-hidden="true">↻</span></button>
+          <small>Seninle her şeye yeniden başlarım.</small>
+        </div>
+      </div>
+      <div class="overlay win-overlay" id="win-screen" hidden>
+        <div class="modal win-modal" role="dialog" aria-modal="true" aria-labelledby="win-title" aria-describedby="win-message">
+          <span class="win-badge">1000 PUAN · BÜTÜN KALPLER SENİN</span>
+          <div class="reward-photo-frame" id="reward-photo-frame"></div>
+          <h2 id="win-title">Hedefe Ulaştın!</h2>
+          <p id="win-message">Ödülün: BENDEN KOCAMAN BİR ÖPÜCÜK VE WAFFLE SENİ ÇOOOK SEVİYORUM</p>
+          <button id="win-restart-button" type="button">Bir Daha Oynayalım ♡</button>
+          <small>En güzel ödülüm, senin gülümsemen.</small>
+        </div>
+      </div>
+    </section>
+    <footer>Kalpleri topla. Gülümsemeyi unutma. <span aria-hidden="true">♡</span></footer>
+  </main>
+</body>
+</html>

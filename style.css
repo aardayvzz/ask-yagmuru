@@ -1,0 +1,85 @@
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+:root { color-scheme: light; --ink: #191326; --muted: #34234e; --rose: #f85ca2; --sky: #11152d; --floor: #25244a; --panel: #ffe9a3; --pixel-font: "Press Start 2P", "Courier New", monospace; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100svh; background: var(--sky); color: var(--ink); font-family: var(--pixel-font); font-weight: 400; }
+/* Her faz düz renktir: skor ve faz mantığı JavaScript'te değişmez. */
+body[data-phase="2"] { --sky: #3a0000; --floor: #613b42; }
+.game-shell { width: min(100%, 860px); height: 100svh; margin: auto; padding: 26px 30px 15px; display: flex; flex-direction: column; gap: 19px; }
+.heading { text-align: center; flex-shrink: 0; }
+.eyebrow { font-size: 8px; line-height: 1.8; color: var(--muted); }
+h1 { margin: 7px 0; font: 400 clamp(13px, 2.6vw, 24px)/1.7 var(--pixel-font); text-wrap: balance; color: #ffd1e8; text-shadow: 2px 2px #5a397d; }
+h1 span { color: var(--rose); }
+.heading p { font-size: 9px; line-height: 1.8; margin: 0; }
+.playfield { position: relative; isolation: isolate; flex: 1; min-height: 0; overflow: hidden; border: 4px solid var(--ink); background: var(--sky); box-shadow: 6px 6px 0 #080b1a; }
+canvas { display: block; width: 100%; height: 100%; touch-action: none; outline: none; image-rendering: pixelated; }
+canvas:focus-visible { box-shadow: inset 0 0 0 3px #ffe66d; }
+.hud { position: absolute; inset: 18px 18px auto; display: flex; gap: 8px; align-items: center; justify-content: space-between; pointer-events: none; }
+.score-card { display: flex; gap: 10px; align-items: center; background: #fff0ad; padding: 10px 12px; border: 3px solid var(--ink); box-shadow: 3px 3px 0 #523778; }
+.score-card span { font-size: 8px; }
+.score-card strong { font-size: 18px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.love-note { color: #d9deff; font-family: var(--pixel-font); font-size: 8px; font-style: normal; text-align: right; line-height: 2; }
+.ground { position: absolute; inset: auto 0 0; height: 42px; display: flex; align-items: center; justify-content: space-around; background: var(--floor); border-top: 4px solid var(--ink); color: #fff3c4; font-size: 8px; pointer-events: none; }
+.overlay { position: absolute; inset: 0; z-index: 2; display: grid; place-items: safe center; padding: 16px; background: none; overflow-y: auto; }
+[hidden] { display: none !important; }
+.modal { width: min(100%, 420px); padding: 22px 20px; text-align: center; border: 5px solid var(--ink); background: var(--panel); box-shadow: 6px 6px 0 #523778, inset 0 0 0 3px #fff8d5; }
+.modal-icon { display: block; font-size: 15px; margin-bottom: 12px; }
+.modal .eyebrow { font-size: 7px; }
+h2 { font: 400 clamp(13px, 2.6vw, 19px)/1.7 var(--pixel-font); margin: 12px 0; }
+.modal p { font-size: 9px; line-height: 2; color: var(--ink); }
+.legend { line-height: 1.8; display: flex; justify-content: center; flex-wrap: wrap; gap: 12px; padding: 10px 0 16px; font-size: 8px; }
+.legend b { display: block; margin-top: 6px; font-size: 7px; line-height: 1.8; font-weight: 400; }
+button { width: 100%; border: 3px solid var(--ink); padding: 14px 8px; color: var(--ink); background: #f85ca2; font: 400 10px/1.8 var(--pixel-font); cursor: pointer; box-shadow: 4px 4px 0 var(--ink); touch-action: manipulation; }
+button:hover { background: #ff91c5; }
+button:active { transform: translate(2px, 2px); box-shadow: 2px 2px 0 var(--ink); }
+button:focus-visible { outline: 3px solid #3f27b0; outline-offset: 4px; }
+button:disabled { cursor: wait; background: #c4a5c9; }
+button span { margin-left: 8px; }
+small { display: block; margin-top: 14px; font-size: 7px; line-height: 2; color: var(--muted); }
+footer { text-align: center; flex-shrink: 0; color: #c9b9e8; font-size: 7px; line-height: 1.8; }
+footer span { color: #ff94c5; margin-left: 7px; }
+#asset-status { font-size: 7px; margin: 8px 0; }
+
+/* GameBoy tarzı sert çerçeve, LCD paleti ve basamaklı gölgeler. */
+.win-modal { background: #c4dc81; border: 6px solid #142519; box-shadow: 6px 6px 0 #142519, inset 0 0 0 4px #87a85d; }
+.win-badge { display: inline-block; padding: 8px; border: 2px solid #142519; background: #9bbc68; color: #142519; font-size: 7px; line-height: 1.8; }
+.win-modal h2 { color: #142519; text-shadow: 2px 2px #e1f1ae; }
+.win-modal #win-message { color: #142519; font-size: clamp(8px, 2.2vw, 11px); line-height: 2; margin: 12px 0 20px; overflow-wrap: anywhere; }
+.win-modal button { background: #9bbc68; }
+.win-modal button:hover { background: #daed9b; }
+.reward-photo-frame { margin: 16px auto; padding: 4px; border: 4px solid #142519; background: #87a85d; box-shadow: 4px 4px 0 #142519; }
+.reward-photo { display: block; width: 100%; height: auto; image-rendering: pixelated; }
+.reward-icon { display: block; font-size: 40px; margin: 12px 0; }
+
+.stage-notice, .fever-notice { position: absolute; left: 50%; transform: translateX(-50%); max-width: calc(100% - 20px); padding: 10px 12px; border: 3px solid var(--ink); background: #ffe66d; color: var(--ink); box-shadow: 3px 3px 0 #523778; font-size: 10px; line-height: 1.8; text-align: center; pointer-events: none; }
+.stage-notice { top: 85px; }
+.fever-notice { top: 135px; background: #91dc8a; }
+.phase-notice { position: absolute; z-index: 1; top: 35%; left: 50%; width: min(90%, 420px); transform: translate(-50%, -50%); text-align: center; padding: 24px 12px; border: 5px solid var(--ink); color: #5b261b; background: #ffe66d; font-size: clamp(18px, 4vw, 30px); line-height: 1.6; box-shadow: 6px 6px 0 var(--ink); pointer-events: none; animation: phase-pop .45s steps(4, end); }
+.phase-notice span { display: block; font-size: .64em; margin-top: 8px; }
+@keyframes phase-pop { from { transform: translate(-50%, -50%) scale(.8); } to { transform: translate(-50%, -50%) scale(1); } }
+.dash-status { position: absolute; bottom: 50px; right: 8px; max-width: calc(100% - 16px); padding: 7px 8px; border: 2px solid var(--ink); background: #ffe66d; color: var(--ink); font-size: 7px; line-height: 1.8; pointer-events: none; }
+.wind-notice { position: absolute; top: 190px; left: 0; right: 0; text-align: center; color: #9c2020; text-shadow: 2px 2px #fff2ac; font-size: clamp(18px, 4vw, 28px); line-height: 1.8; pointer-events: none; animation: wind-pulse .9s steps(2, end) infinite alternate; }
+@keyframes wind-pulse { from { opacity: 1; transform: scale(1); } to { opacity: .3; transform: scale(.96); } }
+
+@media (max-width: 540px) {
+  .game-shell { padding: max(12px, env(safe-area-inset-top)) 10px max(10px, env(safe-area-inset-bottom)); gap: 12px; }
+  .hud { inset: 12px 10px auto; }
+  .score-card { padding: 8px; gap: 6px; }
+  .score-card strong { font-size: 14px; }
+  .score-card span, .love-note { font-size: 7px; }
+  .modal { padding: 18px 12px; }
+  .modal p { font-size: 8px; }
+  footer { font-size: 6px; }
+}
+@media (max-height: 600px) {
+  .game-shell { padding-top: 8px; gap: 7px; }
+  .heading .eyebrow, .heading p, footer { display: none; }
+  h1 { font-size: 12px; margin: 0; }
+  .modal { padding: 12px; }
+  .modal-icon { display: none; }
+  .legend { padding: 3px 0 10px; }
+  h2 { font-size: 13px; margin: 5px 0; }
+  small { margin-top: 9px; }
+  .reward-photo-frame { width: min(100%, 230px); margin: 10px auto; }
+}
+@media (prefers-reduced-motion: reduce) { .phase-notice, .wind-notice { animation: none; } }
