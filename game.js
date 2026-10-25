@@ -17,7 +17,6 @@
   const WIND_SPEED = -115;
   const MAX_FEVER_OBJECTS = 40;
   const MAX_CAT_FEVER_OBJECTS = 18;
-  const PICKUP_SOUND_INTERVAL_MS = 100;
   const dashStatus = document.querySelector("#dash-status");
   const windNotice = document.querySelector("#wind-notice");
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -128,117 +127,134 @@
   const sound = createSoundController();
 
   function createSoundController() {
-    const makeAudio = (file, volume, loop = false) => {
+    // Yalnız uzun müzikler HTMLAudio kullanır; efektler bir kez decode edilir.
+    const music = file => {
       const audio = new Audio(`assets/${encodeURIComponent(file)}`);
-      audio.preload = "auto";
-      audio.volume = volume;
-      audio.loop = loop;
+      audio.preload = "auto"; audio.volume = 0.3; audio.loop = true;
       return audio;
     };
     const tracks = {
-      background: makeAudio("arkaplan music.mp3", 0.3, true),
-      transition: makeAudio("phase 2 gecis.mp3", 0.8),
-      finale: makeAudio("son duzluk.mp3", 0.3, true),
-      hit: makeAudio("carpma sound.mp3", 0.8),
-      gameOver: makeAudio("game over sound.mp3", 0.8)
+      background: music("arkaplan music.mp3"),
+      finale: music("son duzluk.mp3")
     };
-    // Önceden oluşturulan beş ses kanalı, kalp/yemek yağmurunda üst üste çalar.
-    // Hepsi ilk kullanıcı etkileşiminde hazırlanır; her yakalamada yeni dosya açılmaz.
-    const pickups = Array.from({ length: 5 }, () => makeAudio("kalp top sound.mp3", 0.2));
-    const all = [...Object.values(tracks), ...pickups];
-    let mode = "idle", primed = false, generation = 0, nextVoice = 0;
-    let lastPickupTime = -Infinity;
+    const files = {
+      collect: ["kalp top sound.mp3", 0.2],
+      hit: ["carpma sound.mp3", 0.8],
+      transition: ["phase 2 gecis.mp3", 0.8],
+      gameOver: ["game over sound.mp3", 0.8]
+    };
+    const buffers = new Map(), gains = new Map(), active = new Set();
+    let context = null, mode = "idle", generation = 0;
+    let transitionSource = null, primed = false;
+    try {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (AudioContextClass) context = new AudioContextClass();
+    } catch { /* Ses desteği yoksa oyun sessiz çalışabilir. */ }
 
-    function stop(audio) {
+    const ready = context ? Promise.all(Object.entries(files).map(async ([key, [file, volume]]) => {
+      try {
+        const response = await fetch(`assets/${encodeURIComponent(file)}`);
+        if (!response.ok) throw new Error(`Ses yüklenemedi: ${file}`);
+        const buffer = await context.decodeAudioData(await response.arrayBuffer());
+        const gain = context.createGain();
+        gain.gain.value = volume;
+        gain.connect(context.destination);
+        buffers.set(key, buffer); gains.set(key, gain);
+      } catch { /* Bir dosya hatası diğer sesleri ve oyunu engellemez. */ }
+    })) : Promise.resolve();
+
+    function stopMusic(audio) {
       audio.pause();
-      try { audio.currentTime = 0; } catch { /* Henüz metadata yoksa bekleme. */ }
+      try { audio.currentTime = 0; } catch { /* Metadata henüz yok. */ }
+    }
+    function playMusic(audio) {
+      try {
+        const result = audio.play();
+        if (result?.catch) result.catch(() => {});
+      } catch { /* Sonraki kullanıcı etkileşiminde yeniden dene. */ }
     }
     function stopAll() {
       generation++;
-      lastPickupTime = -Infinity;
-      all.forEach(stop);
       mode = "idle";
-    }
-    function play(audio, onFailure) {
-      const version = generation;
-      try {
-        const result = audio.play();
-        if (result && result.catch) result.catch(error => {
-          if (version === generation && onFailure) onFailure(error);
-        });
-      } catch (error) {
-        if (version === generation && onFailure) onFailure(error);
+      Object.values(tracks).forEach(stopMusic);
+      for (const source of active) {
+        source.onended = null;
+        try { source.stop(); } catch { /* Kaynak bitmiş olabilir. */ }
+        source.disconnect();
       }
+      active.clear();
+      transitionSource = null;
     }
-
+    function effect(key, onEnded) {
+      if (!context || context.state !== "running" || !buffers.has(key)) return null;
+      // Buffer paylaşılır; tek kullanımlık hafif kaynaklar üst üste çalabilir.
+      const source = context.createBufferSource();
+      source.buffer = buffers.get(key);
+      source.connect(gains.get(key));
+      const version = generation;
+      source.onended = () => {
+        active.delete(source);
+        source.disconnect();
+        if (version === generation && onEnded) onEnded();
+      };
+      active.add(source);
+      try { source.start(); }
+      catch {
+        active.delete(source); source.disconnect();
+        return null;
+      }
+      return source;
+    }
     function startFinale() {
-      // Eski bir ended/error olayı kazanma ya da tekrar oynama sonrası müzik açamaz.
       if (mode !== "transition" || state !== "playing" || gamePhase !== 2) return;
-      stop(tracks.transition);
+      transitionSource = null;
       mode = "finale";
       resumeMusic();
     }
     function resumeMusic() {
       if (state !== "playing") return;
-      const track = mode === "background" ? tracks.background
-        : mode === "transition" ? tracks.transition : mode === "finale" ? tracks.finale : null;
-      if (!track || !track.paused) return;
-      play(track, error => {
-        // Autoplay reddinde sonraki dokunma tekrar dener. Bozuk geçiş dosyası
-        // ise oyunu sessiz geçişte takılı bırakmaz; Faz 2 müziğine devam edilir.
-        if (track === tracks.transition && error.name !== "NotAllowedError" && error.name !== "AbortError") startFinale();
-      });
+      if (mode === "transition") {
+        if (!context || !buffers.has("transition")) { startFinale(); return; }
+        if (!transitionSource && context.state === "running") {
+          transitionSource = effect("transition", startFinale);
+          if (!transitionSource) startFinale();
+        }
+        return;
+      }
+      const track = mode === "background" ? tracks.background : mode === "finale" ? tracks.finale : null;
+      if (track?.paused) playMusic(track);
     }
     function unlock() {
+      // iOS resume() çağrısı doğrudan kullanıcı olayı içinde yapılır.
+      if (context && context.state !== "running") {
+        try { context.resume().then(resumeMusic).catch(() => {}); } catch {}
+      }
       if (!primed) {
         primed = true;
-        for (const audio of all) {
-          const volume = audio.volume;
-          audio.volume = 0;
-          play(audio);
-          stop(audio);
-          audio.volume = volume;
+        for (const track of Object.values(tracks)) {
+          track.volume = 0; playMusic(track); stopMusic(track); track.volume = 0.3;
         }
       }
       resumeMusic();
     }
-    tracks.transition.addEventListener("ended", () => {
-      if (tracks.transition.ended) startFinale();
-    });
-    tracks.transition.addEventListener("error", startFinale);
-    // Başla dışında, tarayıcı sesi engellediyse sonraki gerçek girişte de dene.
+    if (context) context.addEventListener("statechange", resumeMusic);
     document.addEventListener("pointerdown", unlock, { passive: true });
     document.addEventListener("touchstart", unlock, { passive: true });
     document.addEventListener("keydown", unlock);
-
     return {
+      ready,
       start() {
-        stopAll();
-        unlock();
-        mode = "background";
-        resumeMusic();
+        stopAll(); unlock(); mode = "background"; resumeMusic();
       },
       phaseTwo() {
-        stop(tracks.background);
-        stop(tracks.finale);
-        stop(tracks.transition);
-        mode = "transition";
-        resumeMusic();
+        stopMusic(tracks.background); stopMusic(tracks.finale);
+        mode = "transition"; resumeMusic();
       },
-      collect() {
-        // Gerçek zaman kullanılır: aynı karedeki yakalamalar tek ses çıkarır.
-        const now = performance.now();
-        if (now - lastPickupTime < PICKUP_SOUND_INTERVAL_MS) return;
-        lastPickupTime = now;
-        const voice = pickups.find(audio => audio.paused || audio.ended) || pickups[nextVoice];
-        nextVoice = (nextVoice + 1) % pickups.length;
-        stop(voice);
-        play(voice);
-      },
-      hit() { stop(tracks.hit); play(tracks.hit); },
+      collect() { effect("collect"); },
+      hit() { effect("hit"); },
       finish(lost) {
         stopAll();
-        if (lost) play(tracks.gameOver);
+        if (lost) effect("gameOver");
       }
     };
   }
@@ -273,6 +289,7 @@
       assets.reward.className = "reward-photo";
       assets.reward.alt = "Birlikte mutlu bir anımız";
       document.querySelector("#reward-photo-frame").replaceChildren(assets.reward);
+      await sound.ready;
       assetsReady = true;
       assetStatus.textContent = "Hazır! 500 puanda lezzetli bir sürpriz var.";
       startButton.textContent = "Hadi Başlayalım";

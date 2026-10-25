@@ -8,7 +8,6 @@ const root = path.resolve(__dirname, '..');
 
 async function game() {
   const elements = new Map(), handlers = { window: {}, document: {} }, frames = [];
-  let audioTime = 0;
   const bitmaps = [], blits = [];
   const stack = [], rects = [], labels = [], colors = [], audios = [], audible = [];
   const ctx = { globalAlpha: 1, fillStyle: '#000',
@@ -47,8 +46,22 @@ async function game() {
     }
     pause() { this.paused=true; }
   }
-  const scope = { performance: { now: () => audioTime }, Image, Audio, document: { createElement, body: { dataset: {} }, hidden: false, querySelector: id => elements.get(id), addEventListener: listen('document') },
-    window: { innerWidth: 375, devicePixelRatio: 2, matchMedia: () => ({ matches: false }), addEventListener: listen('window') },
+  const sources = [], fetches = [], decoded = [], contexts = [];
+  class AudioContext {
+    constructor() { this.state='suspended';this.destination={};contexts.push(this); }
+    addEventListener() {}
+    resume() { this.state='running';return Promise.resolve(); }
+    async decodeAudioData(data) { decoded.push(data);return data; }
+    createGain() { return {gain:{value:1},connect(){}}; }
+    createBufferSource() {
+      const source={connect(gain){this.gain=gain;},disconnect(){this.disconnected=true;},
+        start(){this.started=true;},stop(){this.stopped=true;},
+        end(){this.onended?.();}};
+      sources.push(source);return source;
+    }
+  }
+  const scope = { fetch: async url => {fetches.push(url);return {ok:true,arrayBuffer:async()=>({url})};}, Image, Audio, document: { createElement, body: { dataset: {} }, hidden: false, querySelector: id => elements.get(id), addEventListener: listen('document') },
+    window: { AudioContext, innerWidth: 375, devicePixelRatio: 2, matchMedia: () => ({ matches: false }), addEventListener: listen('window') },
     ResizeObserver: class { observe() {} }, requestAnimationFrame: callback => frames.push(callback) };
   const source = fs.readFileSync(path.join(root, 'game.js'), 'utf8');
   // Test erişimi yalnızca VM kopyasına eklenir; üretim koduna debug API konmaz.
@@ -71,7 +84,8 @@ async function game() {
   g.tick = duration => { while (duration > 1e-9) { const dt = Math.min(duration, 1 / 120); g.update(dt); duration -= dt; } };
   g.phaseTwo = () => { g.startGame(); g.setScore(490); g.collect({ points: 10, x: 100, y: 100 }); g.setScore(200); g.clear(); };
   g.enemy = () => ({ x: g.player.x, baseX: g.player.x, y: g.player.y, phase: 0, frequency: 0, amplitude: 0, size: 48, bad: true, imageKey: 'enemy', speedFactor: 0 });
-  g.advanceAudio = ms => { audioTime += ms; };
+  g.sources=sources;g.fetches=fetches;g.decoded=decoded;g.contexts=contexts;
+  g.effect = file => sources.filter(s=>decodeURIComponent(s.buffer.url).endsWith(file));
   g.bitmaps = bitmaps; g.blits = blits; g.document = scope.document;
   g.elements = elements; g.frames = frames; g.ctx = ctx; g.rects = rects; g.labels = labels; g.colors = colors; g.audios = audios; g.audible = audible;
   g.audio = file => audios.find(a => decodeURIComponent(a.src) === `assets/${file}`);
@@ -194,54 +208,15 @@ test('Faz 2 kızıl yıldızları 4× hızlandırır; Faz 1 ve yeniden başlatma
 });
 
 
-test('Başlangıçta sessiz; Başla ile 0.3 sesli loop, Faz 2 sıralaması ve tekrar oyna', async () => {
-  const g = await game();assert.equal(g.audible.length,0);
-  const background=g.audio('arkaplan music.mp3'), transition=g.audio('phase 2 gecis.mp3'), finale=g.audio('son duzluk.mp3');
-  assert(g.audios.every(a=>a.preload==='auto'));
-  g.startGame();assert.equal(background.volume,.3);assert.equal(background.loop,true);assert.equal(background.paused,false);
-  g.setScore(490);g.collect({points:10,x:100,y:100});assert.equal(background.paused,true);assert.equal(transition.paused,false);assert.equal(transition.loop,false);assert.equal(finale.paused,true);
-  transition.emit('ended');assert.equal(finale.paused,false);assert.equal(finale.loop,true);
-  g.startGame();assert.equal(finale.paused,true);assert.equal(transition.paused,true);assert.equal(background.paused,false);
-  const plays=g.audible.length;transition.emit('ended');assert.equal(g.audible.length,plays);
-});
 
-test('Toplama 100 ms aralıkla çalar; hasar sesi yalnızca gerçek cezada çalar', async () => {
-  const g=await game();g.phaseTwo();g.advanceAudio(100);g.audible.length=0;
-  g.collect({points:10,x:100,y:100});g.advanceAudio(100);g.collect({points:10,x:100,y:100});
-  assert.equal(g.audible.length,2);assert.notEqual(g.audible[0],g.audible[1]);assert(g.audible.every(a=>!a.paused));
-  g.add(g.enemy());g.update(0);assert.equal(g.audible.at(-1),g.audio('carpma sound.mp3'));
-  const plays=g.audible.length;g.requestDash();g.add(g.enemy());g.update(0);assert.equal(g.audible.length,plays);
-});
 
-test('Kaybetmede yalnızca game over; kazanmada tüm sesler susar', async () => {
-  const g=await game();const over=g.audio('game over sound.mp3');g.startGame();g.add(g.enemy());g.update(0);
-  assert.equal(over.paused,false);assert(g.audios.filter(a=>a!==over).every(a=>a.paused));
-  g.phaseTwo();assert.equal(over.paused,true);g.setScore(990);g.audible.length=0;g.collect({points:10,x:100,y:100});
-  assert.equal(g.state,'won');assert(g.audios.every(a=>a.paused));assert(!g.audible.includes(over));
-  const plays=g.audible.length;g.audio('phase 2 gecis.mp3').emit('ended');assert.equal(g.audible.length,plays);
-});
 
-test('Autoplay reddi sonraki dokunuşta tekrar denenir; oyun akışı durmaz', async () => {
-  const g=await game();const background=g.audio('arkaplan music.mp3');background.block=true;g.startGame();await new Promise(setImmediate);
-  assert.equal(g.state,'playing');assert.equal(background.paused,true);background.block=false;g.fire('document','pointerdown');assert.equal(background.paused,false);
-  const transition=g.audio('phase 2 gecis.mp3');transition.block=true;g.setScore(490);g.collect({points:10,x:100,y:100});await new Promise(setImmediate);
-  assert.equal(g.phase,2);assert.equal(g.audio('son duzluk.mp3').paused,true);
-  transition.block=false;g.fire('document','pointerdown');assert.equal(transition.paused,false);transition.emit('ended');assert.equal(g.audio('son duzluk.mp3').paused,false);
-});
 
-test('Beş toplama kanalı tekrar kullanılır; yakalama/hasar yeni Audio oluşturmaz', async () => {
-  const g = await game();
-  const pool = g.audios.filter(a => decodeURIComponent(a.src).endsWith('kalp top sound.mp3'));
-  assert.equal(pool.length, 5); assert.equal(g.audios.length, 10);
-  g.phaseTwo();
-  for (let i = 0; i < 100; i++) {
-    g.setScore(200); g.collect({points:10,x:100,y:100});
-    g.add(g.enemy()); g.update(0);
-  }
-  g.startGame();
-  assert.equal(g.audios.length, 10);
-  assert(pool.every(a => a.volume === .2));
-});
+
+
+
+
+
 
 test('Kedi yağmuru 18 objeyi aşmaz; boşalan yer tekrar kullanılabilir', async () => {
   const g = await game(); g.phaseTwo();
@@ -301,17 +276,7 @@ test('Gizli sekmede çizim ve fizik durur; tek RAF zinciri korunur', async () =>
   assert(g.rects.length>before); assert.equal(g.frames.length,1);
 });
 
-test('Ses freni 99/100 ms sınırını korur; puanları ve yeniden başlamayı etkilemez', async () => {
-  const g = await game(); g.startGame(); g.audible.length = 0;
-  for(let i=0;i<10;i++)g.collect({points:10,x:100,y:100});
-  assert.equal(g.audible.length,1); assert.equal(g.score,100);
-  g.advanceAudio(99);g.collect({points:10,x:100,y:100});
-  assert.equal(g.audible.length,1);
-  g.advanceAudio(1);g.collect({points:10,x:100,y:100});
-  assert.equal(g.audible.length,2);assert.equal(g.score,120);
-  g.startGame();g.audible.length=0;g.collect({points:10,x:100,y:100});
-  assert.equal(g.audible.length,1);
-});
+
 
 test('Yalnız kedi yağmuru +30 verir; kahve ve normal objeler aynı kalır', async () => {
   const g=await game();g.startGame();g.clear();
@@ -334,4 +299,56 @@ test('Kedi yağmuru beş saniyede en fazla 20 yeni obje üretir', async () => {
     g.update(1/120);spawned+=g.objects.length;g.objects.length=0;
   }
   assert(spawned>=19 && spawned<=20);
+});
+
+test('Yalnız iki HTMLAudio; dört efekt bir kez fetch/decode edilir', async () => {
+  const g=await game();
+  assert.equal(g.audios.length,2);assert.equal(g.fetches.length,4);assert.equal(g.decoded.length,4);
+  assert(g.audios.every(a=>a.volume===.3 && a.loop && a.preload==='auto'));
+  assert.equal(g.sources.length,0);
+  g.startGame();
+  for(let i=0;i<10;i++)g.collect({points:10,x:100,y:100});
+  const pickups=g.effect('kalp top sound.mp3');
+  assert.equal(pickups.length,10);assert.equal(g.score,100);
+  assert(pickups.every(s=>s.started && s.buffer===pickups[0].buffer && s.gain.gain.value===.2));
+  g.startGame();assert(pickups.every(s=>s.stopped && s.disconnected));
+  assert.equal(g.fetches.length,4);assert.equal(g.decoded.length,4);assert.equal(g.audios.length,2);
+});
+
+test('Web Audio geçişi bitince Faz 2 müziği başlar; eski callback yeniden başlatmada etkisizdir', async () => {
+  const g=await game();g.phaseTwo();
+  const transition=g.effect('phase 2 gecis.mp3')[0];
+  assert(transition.started);assert.equal(transition.gain.gain.value,.8);
+  assert(g.audio('arkaplan music.mp3').paused);
+  assert(g.audio('son duzluk.mp3').paused);
+  transition.end();assert.equal(g.audio('son duzluk.mp3').paused,false);
+  g.phaseTwo();const old=g.effect('phase 2 gecis.mp3').at(-1).onended;
+  g.startGame();old();assert(g.audio('son duzluk.mp3').paused);
+  assert.equal(g.audio('arkaplan music.mp3').paused,false);
+});
+
+test('Hasar buffer sesi sadece cezada; kaybetmede game over, kazanmada sessizlik', async () => {
+  const g=await game();g.phaseTwo();g.add(g.enemy());g.update(0);
+  assert.equal(g.effect('carpma sound.mp3').length,1);
+  g.requestDash();g.add(g.enemy());g.update(0);
+  assert.equal(g.effect('carpma sound.mp3').length,1);
+  g.startGame();g.add(g.enemy());g.update(0);
+  assert.equal(g.effect('game over sound.mp3').length,1);
+  assert(g.audios.every(a=>a.paused));
+  g.phaseTwo();g.setScore(990);g.collect({points:10,x:100,y:100});
+  assert.equal(g.state,'won');assert.equal(g.effect('game over sound.mp3').length,1);
+  assert(g.sources.every(s=>s.stopped || s.disconnected));
+  assert(g.audios.every(a=>a.paused));
+});
+
+test('Askıya alınan AudioContext kullanıcı dokunuşuyla devam eder; autoplay reddi oyunu durdurmaz', async () => {
+  const g=await game();const bg=g.audio('arkaplan music.mp3');
+  bg.block=true;g.startGame();await new Promise(setImmediate);
+  assert.equal(g.state,'playing');assert(bg.paused);
+  bg.block=false;g.fire('document','pointerdown');assert.equal(bg.paused,false);
+  g.contexts[0].state='suspended';g.setScore(490);g.collect({points:10,x:100,y:100});
+  assert.equal(g.effect('phase 2 gecis.mp3').length,0);
+  g.fire('document','touchstart',{touches:[],changedTouches:[]});await new Promise(setImmediate);
+  assert.equal(g.contexts[0].state,'running');
+  assert.equal(g.effect('phase 2 gecis.mp3').length,1);
 });
